@@ -1,4 +1,4 @@
-# Übungen zur Vorlesung _Advanced SQL_
+# Übungen zur Vorlesung _Advanced SQL_ im SS 2022
 
 Nähere Infos zur Organisation der Übungen findet ihr
 
