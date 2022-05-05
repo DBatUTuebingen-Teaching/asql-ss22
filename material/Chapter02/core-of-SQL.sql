@@ -475,8 +475,8 @@ SELECT p.class,
        string_agg(p.species, ', ') AS species  -- string_agg ignores NULL (may use COALESCE(p.species, '?'))
 FROM   prehistoric AS p
 GROUP BY ROLLUP (class, "herbivore?", legs)
--- optional: "visualize" hierarchy
--- ORDER BY class || "herbivore?" || legs NULLS LAST, class || "herbivore?" NULLS LAST, class NULLS LAST
+-- optional: "visualize" hierarchy (least specific last)
+-- ORDER BY (class IS NULL) :: int + ("herbivore?" IS NULL) :: int + (legs IS NULL) :: int, class, "herbivore?", legs
 ;
 
 -- ROLLUP result:
