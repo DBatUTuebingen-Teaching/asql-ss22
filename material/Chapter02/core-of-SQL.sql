@@ -239,6 +239,8 @@ LIMIT 3;          -- fetch ⩽ 3 rows (≡ FETCH NEXT 3 ROWS ONLY)
 
 
 -- Keep the d-smallest row for each of the two false/true groups
+
+-- EXPLAIN (TIMING false, COSTS false)
 SELECT DISTINCT ON (t.c) t.*
 FROM   T AS t
 ORDER BY t.c, t.d ASC;
@@ -246,7 +248,8 @@ ORDER BY t.c, t.d ASC;
 
 -- In absence of ORDER BY, we get *any* representative from the
 -- two groups (PostgreSQL still uses sorting on t.c, however):
-EXPLAIN (TIMING false, COSTS false)
+
+--EXPLAIN (TIMING false, COSTS false)
 SELECT DISTINCT ON (t.c) t.*
 FROM   T AS t;
 
@@ -255,3 +258,358 @@ SELECT DISTINCT ON (t.c) t.*
 FROM   T AS t
 ORDER BY t.a;
 
+
+-----------------------------------------------------------------------
+-- Aggregation
+
+-- Aggregate all rows in table T, resulting table has one row (even
+-- if no rows are supplied):
+
+SELECT COUNT(*)          AS "#rows",
+       COUNT(t.d)        AS "#d",
+       SUM(t.d)          AS "∑d",
+       MAX(t.b)          AS "max(b)",
+       bool_and(t.c)     AS "∀c",
+       bool_or(t.d = 42) AS "∃d=42"
+FROM   T AS t
+WHERE  true;
+
+TABLE T;
+
+
+-- Ordered aggregate (',' separates the aggregated string values):
+
+SELECT string_agg(t.a :: text, ',' ORDER BY t.d) AS "all a"
+FROM   T AS t;
+
+TABLE T;
+
+-- Filtered aggregate:
+
+SELECT SUM(t.d) FILTER (WHERE t.c) AS picky,
+       SUM(t.d)                    AS "don't care"
+FROM   T As t;
+
+-- The query below implements the same filtered aggregration
+--
+--                            can use NULL here
+--                                     ↓
+SELECT SUM(CASE WHEN t.c THEN t.d ELSE 0 END) AS picky,
+       SUM(t.d) AS "don't care"
+FROM   T As t;
+
+
+-- Simple pivoting
+SELECT SUM(t.d) FILTER (WHERE t.b = 'x')            AS "∑d in region x",
+       SUM(t.d) FILTER (WHERE t.b = 'y')            AS "∑d in region y",
+       SUM(t.d) FILTER (WHERE t.b NOT IN ('x','y')) AS "∑d elsewhere"
+FROM   T As t;
+
+
+-- Unique aggregate
+SELECT COUNT(DISTINCT t.c) AS "#distinct non-NULL",  -- there are only two distinct Booleans...
+       COUNT(t.c)          AS "#non-NULL"
+FROM   T as t;
+
+
+-----------------------------------------------------------------------
+-- Grouping
+
+-- Aggregates are evaluated once per (qualifying) group:
+
+SELECT t.b                           AS "group",
+       COUNT(*)                      AS size,
+       SUM(t.d)                      AS "∑d",
+       bool_and(t.a % 2 = 0)         AS "∀even(a)", -- true in the 'x' group, false in the 'y' group
+       string_agg(t.a :: text, ';')  AS "all a"
+FROM   T AS t
+GROUP BY t.b;
+-- HAVING COUNT(*) > 2;
+
+
+--   ⚠️ t.a is *not* constant in each group (but t.a % 2 is)
+--         ↓
+
+SELECT t.a % 2 AS "a odd?",
+       COUNT(*) AS size
+FROM   T AS t
+GROUP BY t.a % 2;
+
+--           ↑
+--     partition T into the odd/even key values
+
+
+-- For the following example recall table T:
+--  • if t.b = 'x', then t.a is odd
+--  • if t.b = 'y', then t.a is even
+--
+SELECT t.b AS "group",
+       t.a % 2 AS "a odd?" -- constant in the 'x'/'y' groups, but PostgreSQL doesn't know...
+FROM   T AS t
+GROUP BY t.b, t.a % 2;
+--            └──┬──┘
+-- functionally dependent on t.b ⇒ will not affect grouping,
+-- list here explicitly as grouping criterion, so we may use
+-- it in the SELECT clause
+
+
+-----------------------------------------------------------------------
+-- Bag/set operations
+
+-- For all bag/set operations, the lhs/rhs argument tables need to
+-- contribute compatible rows:
+-- • row widths must match
+-- • field types in corresponding columns must be cast-compatible
+-- • the row type of the lhs argument determines the result's
+--   field types and names
+
+SELECT t.*
+FROM   T AS t
+WHERE  t.c
+  UNION ALL   -- ≡ UNION (since both queries are disjoint: key t.a included)
+SELECT t.*
+FROM   T AS t
+WHERE  NOT t.c;
+
+
+SELECT t.b
+FROM   T AS t
+WHERE  t.c
+  UNION ALL       -- ≠ UNION (queries contribute duplicate rows)
+SELECT t.b
+FROM   T AS t
+WHERE  NOT t.c;
+
+
+-- Which subquery qᵢ contributed what to the result?
+SELECT 'q₁' AS q, t.b
+FROM   T AS t
+WHERE  t.c
+  UNION ALL
+SELECT 'q₂' AS q, t.b
+FROM   T AS t
+WHERE  NOT t.c;
+
+
+SELECT t.b        -- ⎫
+FROM   T AS t     -- ⎬  q₁ contributes 2 × 'x', 1 × 'y'
+WHERE  t.c        -- ⎭
+  EXCEPT ALL
+SELECT t.b        -- ⎫
+FROM   T AS t     -- ⎬  q₂ contributes 1 × 'x', 1 × 'y'
+WHERE  NOT t.c;   -- ⎭
+
+
+-- EXCEPT ALL is *not* commutative (this yields ∅):
+SELECT t.b        -- ⎫
+FROM   T AS t     -- ⎬  q₂ contributes 1 × 'x', 1 × 'y'
+WHERE  NOT t.c    -- ⎭
+  EXCEPT ALL
+SELECT t.b        -- ⎫
+FROM   T AS t     -- ⎬  q₁ contributes 2 × 'x', 1 × 'y'
+WHERE  t.c;       -- ⎭
+
+
+
+-----------------------------------------------------------------------
+
+DROP TABLE IF EXISTS prehistoric;
+CREATE TABLE prehistoric (class        text,
+                          "herbivore?" boolean,
+                          legs         int,
+                          species      text);
+
+INSERT INTO prehistoric VALUES
+  ('mammalia',  true, 2, 'Megatherium'),
+  ('mammalia',  true, 4, 'Paraceratherium'),
+  ('mammalia', false, 2, NULL),           -- no known bipedal carnivores
+  ('mammalia', false, 4, 'Sabretooth'),
+  ('reptilia',  true, 2, 'Iguanodon'),
+  ('reptilia',  true, 4, 'Brachiosaurus'),
+  ('reptilia', false, 2, 'Velociraptor'),
+  ('reptilia', false, 4, NULL);           -- no known quadropedal carnivores
+
+
+TABLE prehistoric;
+
+-- Group in all three dimensions (class, herbivore?, legs)
+SELECT p.class,
+       p."herbivore?",
+       p.legs,
+       string_agg(p.species, ', ') AS species  -- string_agg ignores NULL (may use COALESCE(p.species, '?'))
+FROM   prehistoric AS p
+GROUP BY GROUPING SETS ((class), ("herbivore?"), (legs));
+
+
+-- Equivalent to GROUPING SETS ((class), ("herbivore?"), (legs))
+SELECT p.class,
+       NULL :: boolean             AS "herbivore?", -- ⎱  NULL is polymorphic ⇒ PostgreSQL
+       NULL :: int                 AS legs,         -- ⎰  will default to type text
+       string_agg(p.species, ', ') AS species
+FROM   prehistoric AS p
+GROUP BY p.class
+
+  UNION ALL
+
+SELECT NULL :: text                AS class,
+       p."herbivore?",
+       NULL :: int                 AS legs,
+       string_agg(p.species, ',' ) AS species
+FROM   prehistoric AS p
+GROUP BY p."herbivore?"
+
+  UNION ALL
+
+SELECT NULL :: text                AS class,
+       NULL :: boolean             AS "herbivore?",
+       p.legs AS legs,
+       string_agg(p.species, ', ') AS species
+FROM   prehistoric AS p
+GROUP BY p.legs;
+
+
+-- ROLLUP
+SELECT p.class,
+       p."herbivore?",
+       p.legs,
+       string_agg(p.species, ', ') AS species  -- string_agg ignores NULL (may use COALESCE(p.species, '?'))
+FROM   prehistoric AS p
+GROUP BY ROLLUP (class, "herbivore?", legs)
+-- optional: "visualize" hierarchy
+-- ORDER BY class || "herbivore?" || legs NULLS LAST, class || "herbivore?" NULLS LAST, class NULLS LAST
+;
+
+-- ROLLUP result:
+---
+--                                             ┌──────────┬────────────┬──────┬──────────────────────────────────────────────────────────────────────────────────┐
+--    GROUP BY ...                             │  class   │ herbivore? │ legs │                                     species                                      │
+--                                             ├──────────┼────────────┼──────┼──────────────────────────────────────────────────────────────────────────────────┤
+--                    ⎧                        │ mammalia │ t          │    2 │ Megatherium                                                                      │
+-- class, herb?, legs ⎨                        │ mammalia │ t          │    4 │ Paraceratherium                                                                  │
+--                    │                        │ mammalia │ f          │    4 │ Sabretooth                                                                       │
+--                    │       individual       │ mammalia │ f          │    2 │ ▢                                                                                │
+--                    │        species         │ reptilia │ t          │    2 │ Iguanodon                                                                        │
+--                    │                        │ reptilia │ t          │    4 │ Brachiosaurus                                                                    │
+--                    │                        │ reptilia │ f          │    2 │ Velociraptor                                                                     │
+--                    ⎩                        │ reptilia │ f          │    4 │ ▢                                                                                │
+--                    ⎧  herbivorous mammals →│ mammalia │ t          │    ▢ │ Megatherium, Paraceratherium                                                     │
+--       class, herb? ⎨  carnivorous mammals →| mammalia │ f          │    ▢ │ Sabretooth                                                                       │
+--                    │ herbivorous reptiles →│ reptilia │ t          │    ▢ │ Iguanodon, Brachiosaurus                                                         │
+--                    ⎩ carnivorous reptiles →| reptilia │ f          │    ▢ │ Velociraptor                                                                     │
+--              class ⎰              mammals →│ mammalia │ ▢          │    ▢ │ Sabretooth, Megatherium, Paraceratherium                                         │
+--                    ⎱             reptiles →│ reptilia │ ▢          │    ▢ │ Velociraptor, Iguanodon, Brachiosaurus                                           │
+--                 () {  prehistoric animals →│ ▢        │ ▢          │    ▢ │ Sabretooth, Megatherium, Paraceratherium, Velociraptor, Iguanodon, Brachiosaurus │
+--                                             └──────────┴────────────┴──────┴──────────────────────────────────────────────────────────────────────────────────┘
+
+
+-- With the empty set ∅ ≡ () of grouping criteria,
+-- all rows form a *single* large group:
+SELECT string_agg(p.species, ', ') AS species
+FROM   prehistoric AS p
+GROUP BY ();                                -- same as w/o GROUP BY
+
+
+
+-- CUBE
+SELECT p.class,
+       p."herbivore?",
+       p.legs,
+       string_agg(p.species, ', ') AS species  -- string_agg ignores NULL (may use coalesce(p.species, '?'))
+FROM   prehistoric AS p
+GROUP BY CUBE (class, "herbivore?", legs)
+-- optional: order groups (least specific last)
+-- ORDER BY (class IS NULL) :: int + ("herbivore?" IS NULL) :: int + (legs IS NULL) :: int, class, "herbivore?", legs
+;
+
+-- CUBE result:
+--
+--                                               ┌──────────┬────────────┬──────┬──────────────────────────────────────────────────────────────────────────────────┐
+--    GROUP BY ...                               │  class   │ herbivore? │ legs │                                     species                                      │
+--                                               ├──────────┼────────────┼──────┼──────────────────────────────────────────────────────────────────────────────────┤
+--                    ⎧                          │ mammalia │ t          │    2 │ Megatherium                                                                      │
+-- class, herb?, legs ⎨                          │ mammalia │ t          │    4 │ Paraceratherium                                                                  │
+--                    │                          │ mammalia │ f          │    2 │ ▢                                                                                │
+--                    │       individual         │ mammalia │ f          │    4 │ Sabretooth                                                                       │
+--                    │        species           │ reptilia │ t          │    2 │ Iguanodon                                                                        │
+--                    │                          │ reptilia │ t          │    4 │ Brachiosaurus                                                                    │
+--                    │                          │ reptilia │ f          │    2 │ Velociraptor                                                                     │
+--                    ⎩                          │ reptilia │ f          │    4 │ ▢                                                                                │
+--                    ⎧    herbivorous mammals →│ mammalia │ t          │    ▢ │ Megatherium, Paraceratherium                                                     │
+--       class, herb? ⎨    carnivorous mammals →│ mammalia │ f          │    ▢ │ Sabretooth                                                                       │
+--                    │   herbivorous reptiles →│ reptilia │ t          │    ▢ │ Iguanodon, Brachiosaurus                                                         │
+--                    ⎩   carnivorous reptiles →│ reptilia │ f          │    ▢ │ Velociraptor                                                                     │
+--                    ⎧        bipedal mammals →│ mammalia │ ▢          │    2 │ Megatherium                                                                      │
+--        class, legs ⎨    quadropedal mammals →│ mammalia │ ▢          │    4 │ Sabretooth, Paraceratherium                                                      │
+--                    │       bipedal reptiles →│ reptilia │ ▢          │    2 │ Velociraptor, Iguanodon                                                          │
+--                    ⎩   quadropedal reptiles →│ reptilia │ ▢          │    4 │ Brachiosaurus                                                                    │
+--                    ⎧     bipedal herbivores →│ ▢        │ t          │    2 │ Megatherium, Iguanodon                                                           │
+--        herb?, legs ⎨ quadropedal herbivores →│ ▢        │ t          │    4 │ Paraceratherium, Brachiosaurus                                                   │
+--                    │     bipedal carnivores →│ ▢        │ f          │    2 │ Velociraptor                                                                     │
+--                    ⎩ quadropedal carnivores →│ ▢        │ f          │    4 │ Sabretooth                                                                       │
+--              class ⎰                mammals →│ mammalia │ ▢          │    ▢ │ Sabretooth, Megatherium, Paraceratherium                                         │
+--                    ⎱               reptiles →│ reptilia │ ▢          │    ▢ │ Velociraptor, Iguanodon, Brachiosaurus                                           │
+--              herb? ⎰             herbivores →│ ▢        │ t          │    ▢ │ Megatherium, Iguanodon, Paraceratherium, Brachiosaurus                           │
+--                    ⎱             carnivores →│ ▢        │ f          │    ▢ │ Velociraptor, Sabretooth                                                         │
+--               legs ⎰               bipedals →│ ▢        │ ▢          │    2 │ Megatherium, Velociraptor, Iguanodon                                             │
+--                    ⎱           quadropedals →│ ▢        │ ▢          │    4 │ Sabretooth, Paraceratherium, Brachiosaurus                                       │
+--                 () {    prehistoric animals →│ ▢        │ ▢          │    ▢ │ Sabretooth, Megatherium, Paraceratherium, Velociraptor, Iguanodon, Brachiosaurus │
+--                                               └──────────┴────────────┴──────┴──────────────────────────────────────────────────────────────────────────────────┘
+
+-----------------------------------------------------------------------
+-- SQL evaluation order
+
+EXPLAIN VERBOSE
+
+SELECT DISTINCT ON ("∑d") 1 AS branch, NOT t.c AS "¬c", SUM(t.d) AS "∑d"
+FROM   T AS t
+WHERE  t.b = 'x'
+GROUP BY "¬c"
+HAVING SUM(t.d) > 0
+
+  UNION ALL
+
+SELECT DISTINCT ON ("∑d") 2 AS branch, NOT t.c AS "¬c", SUM(t.d) AS "∑d"
+FROM   T AS t
+WHERE  t.b = 'x'
+GROUP BY "¬c"
+HAVING SUM(t.d) > 0
+
+ORDER BY branch
+OFFSET 0
+LIMIT  7;
+
+-- Numbers in ⚫ refer to the slide "SQL Evaluation vs. Reading Order"
+-- ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+-- │                                           QUERY PLAN                                            │
+-- ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+-- │ Limit  (cost=49.76..49.77 rows=4 width=13) @(10) ➓                                             │
+-- │   Output: (1), ((NOT t.c)), (sum(t.d))                                                          │
+-- │   ->  Sort  (cost=49.76..49.77 rows=4 width=13) ➒                                              │
+-- │         Output: (1), ((NOT t.c)), (sum(t.d))                                                    │
+-- │         Sort Key: (1)                                                                           │
+-- │         ->  Append  (cost=24.83..49.72 rows=4 width=13) ➑                                      │
+-- │               ->  Unique  (cost=24.83..24.84 rows=2 width=5) ➐                                 │
+-- │                     Output: (1), ((NOT t.c)), (sum(t.d))                                        │
+-- │                     ->  Sort  (cost=24.83..24.84 rows=2 width=5)                                │
+-- │                           Output: (1), ((NOT t.c)), (sum(t.d))                                  │
+-- │                           Sort Key: (sum(t.d))                                                  │
+-- │                           ->  HashAggregate  (cost=24.80..24.82 rows=2 width=5)                 │
+-- │                                 Output: 1, ((NOT t.c)), sum(t.d) ➏                             │
+-- │                                 Group Key: (NOT t.c) ➍                                         │
+-- │                                 Filter: (sum(t.d) > 0) ➎                                       │
+-- │                                 ->  Seq Scan on public.t  (cost=0.00..24.75 rows=6 width=5) ➊  │
+-- │                                       Output: (NOT t.c), t.d ➌                                 │
+-- │                                       Filter: (t.b = 'x'::text) ➋                              │
+-- │               ->  Unique  (cost=24.83..24.84 rows=2 width=9)                                    │
+-- │                     Output: (2), ((NOT t_1.c)), (sum(t_1.a))                                    │
+-- │                     ->  Sort  (cost=24.83..24.84 rows=2 width=9)                                │
+-- │                           Output: (2), ((NOT t_1.c)), (sum(t_1.a))                              │
+-- │                           Sort Key: (sum(t_1.a))                                                │
+-- │                           ->  HashAggregate  (cost=24.80..24.82 rows=2 width=9)                 │
+-- │                                 Output: 2, ((NOT t_1.c)), sum(t_1.a)                            │
+-- │                                 Group Key: (NOT t_1.c)                                          │
+-- │                                 Filter: (sum(t_1.d) > 0)                                        │
+-- │                                 ->  Seq Scan on public.t t_1  (cost=0.00..24.75 rows=6 width=9) │
+-- │                                       Output: (NOT t_1.c), t_1.a, t_1.d                         │
+-- │                                       Filter: (t_1.b = 'x'::text)                               │
+-- └─────────────────────────────────────────────────────────────────────────────────────────────────┘
