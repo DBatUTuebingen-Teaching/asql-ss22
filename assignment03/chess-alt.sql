@@ -23,10 +23,10 @@ CREATE TABLE piece_movements (
 );
 
 INSERT INTO piece_movements(piece,move_id) VALUES
-  ( '♚', 9), ( '♚',10), ( '♚',11), ( '♚',12), ( '♚',13), ( '♚',14), ( '♚',15), ( '♚',16),
-  ( '♔', 9), ( '♔',10), ( '♔',11), ( '♔',12), ( '♔',13), ( '♔',14), ( '♔',15), ( '♔',16),
-  ( '♞', 1), ( '♞', 2), ( '♞', 3), ( '♞', 4), ( '♞', 5), ( '♞', 6), ( '♞', 7), ( '♞', 8),
-  ( '♘', 1), ( '♘', 2), ( '♘', 3), ( '♘', 4), ( '♘', 5), ( '♘', 6), ( '♘', 7), ( '♘', 8);
+  ( 'k', 9), ( 'k',10), ( 'k',11), ( 'k',12), ( 'k',13), ( 'k',14), ( 'k',15), ( 'k',16),
+  ( 'K', 9), ( 'K',10), ( 'K',11), ( 'K',12), ( 'K',13), ( 'K',14), ( 'K',15), ( 'K',16),
+  ( 'n', 1), ( 'n', 2), ( 'n', 3), ( 'n', 4), ( 'n', 5), ( 'n', 6), ( 'n', 7), ( 'n', 8),
+  ( 'N', 1), ( 'N', 2), ( 'N', 3), ( 'N', 4), ( 'N', 5), ( 'N', 6), ( 'N', 7), ( 'N', 8);
 
 -- The chess board represents its positions as (x,y) coordinates.
 CREATE TABLE board (
@@ -42,10 +42,10 @@ CREATE TABLE board (
 
 -- One of many possible piece arrangements 
 INSERT INTO board(x,y,piece) 
-VALUES (4,4,'♞'),
-       (5,6,'♔');
+VALUES (4,4,'n'),
+       (5,6,'K');
 
--- This table holds a row (x,y,piece), if piece is located on the 
+-- This table holds a row (x,y,piece) if piece is located on the 
 -- board at position (x,y). If no piece is located at (x,y), the table holds 
 -- row (x,y,' '). The resulting table has a cardinality of :board_width * :board_height.
 WITH board_and_pieces(x,y,piece) AS ( 
@@ -85,9 +85,9 @@ ORDER BY br.y DESC;
 -- ───┼──────────────────
 --  8 │  | | | | | | | 
 --  7 │  | | |0|0|0| | 
---  6 │  | |0|0|♔|0| | 
+--  6 │  | |0|0|K|0| | 
 --  5 │  |0| |0|0|0| | 
---  4 │  | | |♞| | | | 
+--  4 │  | | |n| | | | 
 --  3 │  |0| | | |0| | 
 --  2 │  | |0| |0| | | 
 --  1 │  | | | | | | | 
