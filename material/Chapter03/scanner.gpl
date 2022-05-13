@@ -1,0 +1,9 @@
+set terminal svg size 500,375 enhanced font "PragmataPro,16"
+set output 'contour.svg'
+
+set datafile separator ','
+set key on bmargin
+set tics scale 0
+
+plot 'contour.csv' using 1:3 pt 7 ps 0.5 lc rgb "skyblue" title 'top' , \
+     'contour.csv' using 1:2 pt 7 ps 0.5 lc rgb "gray"    title 'bottom'
