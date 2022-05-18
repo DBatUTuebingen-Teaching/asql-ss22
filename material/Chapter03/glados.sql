@@ -29,14 +29,16 @@ CREATE TABLE glados (id     int PRIMARY KEY, -- key
 
 \set blob_path '/Users/grust/AdvancedSQL/slides/Week03/live/GLaDOS/'
 
-INSERT INTO glados(id, line, portal, voice)
-  SELECT quotes.id, quotes.line, quotes.portal :: edition,
-         read_blob(:'blob_path' || quotes.wav) AS voice
+INSERT INTO glados(id, voice, line, portal)
+  SELECT quotes.id,
+         read_blob(:'blob_path' || quotes.wav) AS voice,
+         quotes.line,
+         quotes.portal :: edition
   FROM
-    (VALUES (1, '... you will be missed',       'Portal 1', 'will-be-missed.wav'),
-            (2, 'Two plus two is...ten',        'Portal 1', 'base-four.wav'),
-            (3, 'The facility is ...',          'Portal 2', 'facility-operational.wav'),
-            (4, 'Don''t press that button ...', 'Portal 2', 'press-button.wav')) AS quotes(id,line,portal,wav);
+    (VALUES (1, 'will-be-missed.wav'      , '... you will be missed',       'Portal 1'),
+            (2, 'base-four.wav'           , 'Two plus two is...ten',        'Portal 1'),
+            (3, 'facility-operational.wav', 'The facility is ...',          'Portal 2'),
+            (4, 'press-button.wav'        , 'Don''t press that button ...', 'Portal 2')) AS quotes(id,wav,line,portal);
 
 
 -- Dump table contents, encode (prefix of) BLOB for table output
