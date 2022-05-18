@@ -340,7 +340,7 @@ SELECT ('{ "a":0, "b": { "b₁":[1,2], "b₂":3 } }' :: jsonb)['b']['b₁'][1] :
 
 SELECT j
 FROM   jsonb_path_query('{ "a":0, "b": { "c":[1,2], "d":3 } }' :: jsonb,
-                     --   '$'                     -- root value
+                     '$'                        -- root value
                      -- '$.*'                   -- all child values of the root
                      -- '$.a'                   -- child a of the root
                      -- '$.b.d'                 -- grandchild d below child b
@@ -441,7 +441,7 @@ SELECT currval('seq');      -- ⇒ 42
 SELECT setval ('seq',100);  -- ⇒ 100 (+ side effect)
 SELECT nextval('seq');      -- ⇒ 1   (wrap-around)
 
--- Sequences are system-maintained single-row/single-column tables:
+-- Behind the scenes, sequences are system-maintained single-row tables:
 --
 TABLE seq;
 
