@@ -20,7 +20,7 @@ CREATE TABLE fsm (
 
 -- Create DFA transition table for regular expression
 -- ([A-Za-z]+[₀-₉]*([⁰-⁹]*[⁺⁻])?)+
-INSERT INTO fsm VALUES
+INSERT INTO fsm(source,labels,target,"final?") VALUES
   (0, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',           1, false ),
   (1, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz₀₁₂₃₄₅₆₇₈₉', 1, true ),
   (1, '⁰¹²³⁴⁵⁶⁷⁸⁹',                                                     2, true),
@@ -77,19 +77,10 @@ match(compound, step, state, input) AS (
 -- ORDER BY m.step, m.compound;
 --
 -- ➌
-SELECT DISTINCT
-  m.compound,
-  LAST_VALUE(m.input) OVER matching = '' -- no residual input in final state?
-    AND
-  LAST_VALUE(m.state) OVER matching      -- final state reached during matching
-    IN (SELECT f.source     -- ⎫
-        FROM   fsm AS f     -- ⎬  all FSM final states
-        WHERE  f."final?")  -- ⎭
-  AS "succesOs?"
+SELECT DISTINCT ON (m.compound) m.compound,
+       m.input = '' AND m.state IN (SELECT f.source                  -- ⎫
+                                    FROM   fsm AS f                  -- ⎬  all FSM final states
+                                    WHERE  f."final?") AS "success?" -- ⎭
 FROM   match AS m
-WINDOW matching AS (PARTITION BY m.compound
-                    ORDER BY m.step
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING);
-
-
+ORDER BY m.compound, m.step DESC;
 
